@@ -1,0 +1,81 @@
+use syntax
+use test
+
+// A line's tokens as "kind:text" pieces (spaces between tokens aren't tokens).
+define show(lang: syntax.Language, line: String, state: Int = 0) -> String {
+    lt := lang.tokenize(line, state)
+    parts := []
+    for t in lt.tokens {
+        tok: syntax.Token = t
+        parts.append(tok.kind + ":" + line.substring(tok.start, tok.end))
+    }
+    return " ".join(parts)
+}
+
+define test_keywords_names_numbers() -> void {
+    q := syntax.quirk()
+    test.assert_eq(show(q, "define add(a: Int, b: Int) -> Int {"),
+        "keyword:define function:add punctuation:( plain:a operator:: type:Int punctuation:, plain:b operator:: type:Int punctuation:) operator:-> type:Int punctuation:{")
+    test.assert_eq(show(q, "    return a + b * 2.5"), "keyword:return plain:a operator:+ plain:b operator:* number:2.5")
+    test.assert_eq(show(q, "x := true and not null"), "plain:x operator::= constant:true keyword:and keyword:not constant:null")
+    test.assert_eq(show(q, "p := Point(1, 2)"), "plain:p operator::= type:Point punctuation:( number:1 punctuation:, number:2 punctuation:)")
+    test.assert_eq(show(q, "db.query_as(Todo, sql)"), "plain:db operator:. function:query_as punctuation:( type:Todo punctuation:, plain:sql punctuation:)")
+    test.assert_eq(show(q, "@cache"), "decorator:@cache")
+    test.assert_eq(show(q, "for item in items {"), "keyword:for plain:item keyword:in plain:items punctuation:{")
+}
+
+define test_strings_and_comments() -> void {
+    q := syntax.quirk()
+    test.assert_eq(show(q, "s := \"a\\tb\" // note"), "plain:s operator::= string:\" string:a escape:\\t string:b\" comment:// note")
+    test.assert_eq(show(q, "\"hi \${name}!\""), "string:\" string:hi  interpolation:\${name} string:!\"")
+    test.assert_eq(show(q, "\"\$who here\""), "string:\" interpolation:\$who string: here\"")
+    test.assert_eq(show(q, "r\"\\d+ \$x\""), "string:r\" string:\\d+ \$x\"")          // raw: no escapes, no \$
+    test.assert_eq(show(q, "'c' + x / 2"), "string:' string:c' operator:+ plain:x operator:/ number:2")
+    test.assert_eq(show(q, "url := \"http://x\""), "plain:url operator::= string:\" string:http://x\"")   // not a comment
+    test.assert_eq(show(q, "\"open"), "string:\" string:open")                     // unterminated: to the end
+}
+
+define test_states_across_lines() -> void {
+    q := syntax.quirk()
+    a := q.tokenize("t := \"\"\"first", 0)
+    test.assert_eq(a.state, syntax.TRIPLE2)
+    test.assert_eq(show(q, "middle \${x}", syntax.TRIPLE2), "string:middle  interpolation:\${x}")
+    b := q.tokenize("last\"\"\" + y", syntax.TRIPLE2)
+    test.assert_eq(b.state, 0)
+    test.assert_eq(show(q, "last\"\"\" + y", syntax.TRIPLE2), "string:last\"\"\" operator:+ plain:y")
+    test.assert_eq(q.tokenize("return r\"\"\"<p>{{ x }}", 0).state, syntax.RAW_TRIPLE2)
+    test.assert_eq(show(q, "<b>\$no</b>", syntax.RAW_TRIPLE2), "string:<b>\$no</b>")   // raw: \$ isn't interpolation
+    test.assert_eq(q.tokenize("---", 0).state, syntax.DOC)
+    test.assert_eq(show(q, "A doc line, with \"quotes\"", syntax.DOC), "doc:A doc line, with \"quotes\"")
+    test.assert_eq(q.tokenize("---", syntax.DOC).state, 0)
+    test.assert_eq(show(q, "--- One line. ---"), "doc:--- One line. ---")
+    test.assert_eq(show(q, "x := 1 - --y"), "plain:x operator::= number:1 operator:- operator:-- plain:y")
+}
+
+define test_highlighter_redoes_only_what_changed() -> void {
+    lines := ["x := 1", "s := \"\"\"", "still string", "\"\"\"", "y := 2"]
+    hl := syntax.Highlighter(syntax.quirk())
+    t2: syntax.Token = hl.tokens(lines, 2)[0]
+    test.assert_eq(t2.kind, "string")
+    t4: syntax.Token = hl.tokens(lines, 4)[0]
+    test.assert_eq(t4.kind, "plain")
+    // Close the string earlier: line 2 is code now.
+    lines[1] = "s := \"\"\"\"\"\""
+    hl.changed(1)
+    t2b: syntax.Token = hl.tokens(lines, 2)[0]
+    test.assert_eq(t2b.kind, "plain")
+    test.assert_eq(hl.state_at(lines, 3), 0)
+    test.assert_eq(hl.tokens(lines, 99).length(), 0)
+}
+
+define test_languages_and_themes() -> void {
+    test.assert_eq(syntax.for_file("src/main.qk").name, "Quirk")
+    test.assert_eq(syntax.for_file("lib.quirk").line_comment(), "//")
+    p := syntax.for_file("notes.txt")
+    test.assert_eq(p.name, "Plain text")
+    test.assert_eq(show(p, "anything at all"), "plain:anything at all")
+    d := syntax.dark()
+    test.assert_eq(d.color("keyword"), "#c586c0")
+    test.assert_eq(d.color("no-such-kind"), d.color("text"))
+    test.assert_eq(syntax.light().color("background"), "#ffffff")
+}
