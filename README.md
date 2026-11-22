@@ -35,7 +35,7 @@ hl.changed(12)
   `'…'`, `"""…"""`, raw `r"…"` (no escapes or `$`) — with `\n` escapes and
   `${…}` / `$name` interpolation, `// comments`, `--- docstrings ---`.
 - **Themes:** `syntax.dark()`, `syntax.light()` — a `"#rrggbb"` for each kind,
-  plus the editor's own (`background`, `gutter`, `line`, `selection`, `cursor`).
+  plus the editor's own (`background`, `gutter`, `line`, `selection`, `cursor`, `find_match`, `find_current`).
 - **Another language:** a struct extending `syntax.Language`, with its own
   `tokenize(line, state)`.
 
