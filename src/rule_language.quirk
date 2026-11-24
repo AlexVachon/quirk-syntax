@@ -1,0 +1,167 @@
+// Syntax: RuleLanguage: colouring any language from its LanguageConfig
+
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+use regex
+
+from .language use { CODE, Language, Token, LineTokens }
+from .config use { LanguageConfig, Rule }
+
+---
+A language coloured from a `LanguageConfig`: its `[[rule]]`s (the one that
+starts first wins; at the same place, the one written first), its words
+(keywords, constants, types; a word before `(` is a function) and the 
+rest as operators and punctuation. A line that ends inside a `begin` /
+`end` rule gives the next line state `rule index + 1`.
+---
+struct RuleLanguage: Language {
+    config: LanguageConfig
+    _regexes: List
+
+    define __init(self, config: LanguageConfig) -> void {
+        super().__init(config.name)
+        
+        self.config = config
+        self._regexes = []
+
+        for r in config.rules {
+            rule: Rule = r
+            if rule.match.length() > 0 {
+                self._regexes.append(regex.compile(rule.match))
+            } else {
+                self._regexes.append(null)
+            }
+        }
+    }
+
+    define line_comment(self) -> String {
+        return self.config.line_comment
+    }
+
+    define tokenize(self, line: String, state: Int) -> LineTokens {
+        out := []
+        i := 0
+
+        // Still inside a begin / end rule from the line above ?
+        if state != CODE {
+            rule: Rule = self.config.rules[state - 1]
+            close := line.find(rule.end)
+            if close < 0 {
+                if line.length() > 0 { out.append(Token(0, line.length(), rule.kind)) }
+                return LineTokens(out, state)
+            }
+            i = close + rule.end.length()
+            out.append(Token(0, i, rule.kind))
+        }
+
+        while i < line.length() {
+            hit := self._next_rule(line, i)
+            
+            start: Int = hit[0]
+            k: Int = hit[1]
+
+            self._words(line, i, start, out)
+
+            if k < 0 { break }
+            
+            rule: Rule = self.config.rules[k]
+            if rule.match.length() > 0 {
+                end: Int = hit[2]
+                out.append(Token(start, end, rule.kind))
+                i = end
+            } else {
+                close := line.find(rule.end, start + rule.begin.length())
+                if close < 0 {
+                    out.append(Token(start, line.length(), rule.kind))
+                    return LineTokens(out, k + 1)
+                }
+                i = close + rule.end.length()
+                out.append(Token(start, i, rule.kind))
+            }
+        }
+        return LineTokens(out, CODE)
+    }
+
+    // The rule that starts first at or after `i`: [start, rule index, end].
+    // [line length, -1, 0] when none does.
+    define _next_rule(self, line: String, i: Int) -> List {
+        best := line.length()
+        best_k := -1
+        best_end := 0
+
+        k := 0
+        while k < self.config.rules.length() {
+            rule: Rule = self.config.rules[k]
+            start := -1
+            end := 0
+
+            if rule.match.length() > 0 {
+                r: regex.Regex = self._regexes[k]
+                m := r.find_from(line, i)
+
+                // Not from the middle of a word: the 1 of `x1` isn't a number.
+                while m != null and _rl_inside_word(line, m.start) { m = r.find_from(line, m.start + 1) }
+                if m != null and m.end > m.start {
+                    start = m.start
+                    end = m.end
+                }
+            } elif rule.begin.length() > 0 {
+                start = line.find(rule.begin, i)
+            }
+            if start >= 0 and start < best {
+                best = start
+                best_k = k
+                best_end = end
+            }
+            k = k + 1
+        }
+        return [best, best_k, best_end]
+    }
+
+    // Words, operators and punctuation in [from, to): no rule covers them.
+    define _words(self, line: String, from: Int, to: Int, out: List) -> void {
+        i := from
+
+        while i < to {
+            c := line.substring(i, i + 1)
+            if c == " " or c == "\t" {
+                i = i + 1
+            } elif _rl_word_start(c) {
+                j := i + 1
+                while j < to and _rl_word(line.substring(j, j + 1)) { j = j + 1 }
+                word := line.substring(i, j)
+                out.append(Token(i, j, self._word_kind(word, line, j)))
+                i = j
+            } elif "()[]{},;".find(c) >= 0 {
+                out.append(Token(i, i + 1, "punctuation"))
+                i = i + 1
+            } else {
+                out.append(Token(i, i + 1, "operator"))
+                i = i + 1
+            }
+        }
+    }
+
+    // keyword / constant / type from the config, "function" before a `(`, else "plain".
+    define _word_kind(self, word: String, line: String, after: Int) -> String {
+        if self.config.keywords.has(word) { return "keyword" }
+        if self.config.constants.has(word) { return "constant" }
+        if self.config.types.has(word) { return "type" }
+        j := after
+        while j < line.length() and line.substring(j, j + 1) == " " { j = j + 1 }
+        if j < line.length() and line.substring(j, j + 1) == "(" { return "function" }
+        return "plain"
+    }
+}
+
+define _rl_word_start(c: String) -> Bool {
+    return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_"
+}
+
+define _rl_word(c: String) -> Bool {
+    return _rl_word_start(c) or (c >= "0" and c <= "9")
+}
+
+define _rl_inside_word(line: String, i: Int) -> Bool {
+    return i > 0 and _rl_word(line.substring(i - 1, i)) and _rl_word(line.substring(i, i + 1))
+}

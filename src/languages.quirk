@@ -1,0 +1,83 @@
+// syntax: quirk(), plain(), for_file(): the language a file uses
+
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+
+use fs
+
+from .config use { LanguageConfig, parse_config }
+from .rule_language use { RuleLanguage }
+from .language use { Language }
+from .quirk_language use { QuirkLanguage }
+
+_configs := []
+
+--- Quirk's language. ---
+define quirk() -> Language {
+    return QuirkLanguage()
+}
+
+--- No colours: every line one "plain" token. ---
+define plain() -> Language {
+    return Language("Plain text")
+}
+
+---
+Add a language. For a file extension two configs claim, the one
+registered last wins (a project's config over the user's over the bundled).
+---
+define register(config: LanguageConfig) -> void {
+    _configs.insert(0, config)
+}
+
+--- Forget the registered configs (before loading another folder's). ---
+define clear() -> void {
+    _configs.clear()
+}
+
+---
+Register every `.toml` language config in `dir` (none if it doesn't
+exist). Returns a message per file that couldn't be read
+("python.toml: ...").
+---
+define load_dir(dir: String) -> List {
+    errors := []
+    if not fs.is_dir(dir) { return errors }
+    for n in fs.list_dir(dir).sort() {
+        name: String = n
+
+        if not name.endswith(".toml") { continue }
+        try {
+            register(parse_config(fs.read_text(fs.join(dir, name))))
+        } catch (e: Exception) {
+            errors.append(name + ": " + String(e))
+        }
+    }
+    return errors
+}
+
+---
+The registered config for `path`'s extension, or null.
+---
+define config_for(path: String) -> LanguageConfig {
+    for c in _configs {
+        config: LanguageConfig = c
+
+        for e in config.extensions {
+            ext: String = e
+            if ext.length() > 0 and path.lower().endswith(ext.lower()) { return config }
+        }
+    }
+    return null
+}
+
+---
+The Language for a file, by its extension: a registered config's, else
+Quirk for .qk / .quirk, else plain text.
+---
+define for_file(path:String) -> Language {
+    config := config_for(path)
+    if config != null { return RuleLanguage(config) }
+    if path.endswith(".qk") or path.endswith(".quirk") { return quirk() }
+    return plain()
+}

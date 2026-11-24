@@ -79,3 +79,86 @@ define test_languages_and_themes() -> void {
     test.assert_eq(d.color("no-such-kind"), d.color("text"))
     test.assert_eq(syntax.light().color("background"), "#ffffff")
 }
+
+_PY := "name = \"Python\"\n" +
+       "extensions = [\".py\", \".pyi\"]\n" +
+       "line_comment = \"#\"\n" +
+       "keywords = \"def class  if\"\n" +
+       "constants = \"True False None\"\n" +
+       "[[rule]]\nkind = \"comment\"\nmatch = '#.*'\n" +
+       "[[rule]]\nkind = \"string\"\nbegin = '\"\"\"'\nend = '\"\"\"'\n" +
+       "[server]\ncommand = [\"pyright-langserver\", \"--stdio\"]\n"
+
+define test_parse_config() -> void {
+    c := syntax.parse_config(_PY)
+    test.assert_eq(c.name, "Python")
+    test.assert_eq(c.extensions.length(), 2)
+    test.assert_eq(c.line_comment, "#")
+    test.assert_true(c.keywords.has("def"))
+    test.assert_false(c.keywords.has("True"))      // a constant, not a keyword
+    test.assert_false(c.keywords.has(""))          // the double space
+    test.assert_eq(c.keywords.length(), 3)
+    test.assert_eq(c.rules.length(), 2)
+    r: syntax.Rule = c.rules[1]
+    test.assert_eq(r.kind, "string")
+    test.assert_eq(r.begin, "\"\"\"")
+    test.assert_eq(String(c.server[0]), "pyright-langserver")
+}
+
+define test_parse_config_defaults() -> void {
+    c := syntax.parse_config("name = \"X\"\n")
+    test.assert_eq(c.name, "X")
+    test.assert_eq(c.extensions.length(), 0)
+    test.assert_eq(c.rules.length(), 0)
+    test.assert_eq(c.server.length(), 0)
+    test.assert_eq(c.keywords.length(), 0)
+}
+
+// Like show(), plus " | <state the next line starts in>".
+define show_state(lang: syntax.Language, line: String, state: Int = 0) -> String {
+    lt := lang.tokenize(line, state)
+    return show(lang, line, state) + " | " + String(lt.state)
+}
+
+_PY_RULES := "name = \"Python\"\n" +
+       "line_comment = \"#\"\n" +
+       "keywords = \"def return if\"\n" +
+       "constants = \"True None\"\n" +
+       "types = \"int\"\n" +
+       "[[rule]]\nkind = \"comment\"\nmatch = '#.*'\n" +
+       "[[rule]]\nkind = \"string\"\nbegin = '\"\"\"'\nend = '\"\"\"'\n" +
+       "[[rule]]\nkind = \"string\"\nmatch = '\"([^\"\\\\]|\\\\.)*\"'\n" +
+       "[[rule]]\nkind = \"number\"\nmatch = '[0-9][0-9_.]*'\n"
+
+define test_rules_words_and_punctuation() -> void {
+    py := syntax.RuleLanguage(syntax.parse_config(_PY_RULES))
+    test.assert_eq(py.name, "Python")
+    test.assert_eq(py.line_comment(), "#")
+    test.assert_eq(show_state(py, "def add(a: int) -> None:"),
+        "keyword:def function:add punctuation:( plain:a operator:: type:int punctuation:) operator:- operator:> constant:None operator:: | 0")
+    test.assert_eq(show_state(py, "    return 42  # the answer"), "keyword:return number:42 comment:# the answer | 0")
+    test.assert_eq(show_state(py, "x1 = 2"), "plain:x1 operator:= number:2 | 0")
+}
+
+define test_first_rule_to_start_wins() -> void {
+    py := syntax.RuleLanguage(syntax.parse_config(_PY_RULES))
+    test.assert_eq(show_state(py, "x = \"a # not a comment\" # one"), "plain:x operator:= string:\"a # not a comment\" comment:# one | 0")
+    test.assert_eq(show_state(py, "s = \"say \\\"hi\\\"\""), "plain:s operator:= string:\"say \\\"hi\\\"\" | 0")
+}
+
+define test_begin_end_across_lines() -> void {
+    py := syntax.RuleLanguage(syntax.parse_config(_PY_RULES))
+    test.assert_eq(show_state(py, "doc = \"\"\"start"), "plain:doc operator:= string:\"\"\"start | 2")
+    test.assert_eq(show_state(py, "middle # not a comment", 2), "string:middle # not a comment | 2")
+    test.assert_eq(show_state(py, "end\"\"\" + 1", 2), "string:end\"\"\" operator:+ number:1 | 0")
+    test.assert_eq(show_state(py, "x = \"\"\"one line\"\"\""), "plain:x operator:= string:\"\"\"one line\"\"\" | 0")
+}
+
+define test_highlighter_with_rules() -> void {
+    hl := syntax.Highlighter(syntax.RuleLanguage(syntax.parse_config(_PY_RULES)))
+    lines := ["a = \"\"\"", "inside", "\"\"\"", "b = 1"]
+    last: syntax.Token = hl.tokens(lines, 3)[2]
+    test.assert_eq(last.kind, "number")
+    inside: syntax.Token = hl.tokens(lines, 1)[0]
+    test.assert_eq(inside.kind, "string")
+}

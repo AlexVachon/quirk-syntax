@@ -1,0 +1,52 @@
+// syntax: Theme, dark(), light()
+
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+from typing.collections.map use { Map }
+
+---
+A colour ("#rrggbb") for each token kind, and the editor's own colours:
+"background", "text", "gutter", "gutter_text", "line" (the current
+line), "selection", "cursor". `color(kind)` falls back to "text".
+---
+struct Theme {
+    name: String
+    colors: Map
+
+    define __init(self, name: String, colors: Map) -> void {
+        self.name = name
+        self.colors = colors
+    }
+
+    define color(self, kind: String) -> String {
+        if self.colors.has(kind) { return String(self.colors[kind]) }
+        if self.colors.has("text") { return String(self.colors["text"]) }
+        return "#cccccc"
+    }
+}
+
+--- Dark: light text on near-black (like VS Code's "Dark Modern"). ---
+define dark() -> Theme {
+    return Theme("Dark", {
+        "background": "#1f1f1f", "text": "#cccccc", "gutter": "#1f1f1f", "gutter_text": "#6e7681",
+        "gutter_current": "#cccccc", "line": "#2a2a2a", "selection": "#264f78", "cursor": "#aeafad",
+        "find_match": "#623315", "find_current": "#9e6a03",
+        "keyword": "#c586c0", "constant": "#569cd6", "type": "#4ec9b0", "function": "#dcdcaa",
+        "string": "#ce9178", "escape": "#d7ba7d", "interpolation": "#9cdcfe", "number": "#b5cea8",
+        "comment": "#6a9955", "doc": "#6a9955", "operator": "#d4d4d4", "punctuation": "#cccccc",
+        "decorator": "#dcdcaa", "plain": "#9cdcfe"
+    })
+}
+
+--- Light: dark text on white. ---
+define light() -> Theme {
+    return Theme("Light", {
+        "background": "#ffffff", "text": "#3b3b3b", "gutter": "#ffffff", "gutter_text": "#8a8a8a",
+        "gutter_current": "#171184", "line": "#f3f3f3", "selection": "#add6ff", "cursor": "#000000",
+        "find_match": "#f8c9aa", "find_current": "#a8ac94",
+        "keyword": "#af00db", "constant": "#0000ff", "type": "#267f99", "function": "#795e26",
+        "string": "#a31515", "escape": "#ee0000", "interpolation": "#001080", "number": "#098658",
+        "comment": "#008000", "doc": "#008000", "operator": "#3b3b3b", "punctuation": "#3b3b3b",
+        "decorator": "#795e26", "plain": "#001080"
+    })
+}

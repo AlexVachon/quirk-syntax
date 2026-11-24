@@ -1,0 +1,105 @@
+// syntax: language configs (.toml): Rule, LanguageConfig
+
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+from typing.collections.map use { Map }
+use toml
+
+---
+One colouring rule of a language config (`[[rule]]` in its toml).: either
+`match` (a regex for one line), or `begin` / `end` (text that can span 
+lines, like a block comment or triple-quoted string). `kind` is the
+token kind it gives: "comment", "string", "number"...
+---
+struct Rule {
+    kind: String
+    match: String
+    begin: String
+    end: String    
+}
+
+---
+A language described by a .toml file (see `parse_config`): its name, file
+extensions, comment marker, brackets, the pairs typed together, the words
+coloured as keywords/ constants / types, its `Rule`s and the command of
+its language server (empty: none).
+---
+struct LanguageConfig {
+    name: String
+    extensions: List
+    line_comment: String
+    brackets: List
+    auto_close: List
+    keywords: Map
+    constants: Map
+    types: Map
+    rules: List
+    server: List    
+}
+
+---
+A text value of a config table ("" when it's not there).
+---
+define _cfg_str(m: Map, key: String) -> String {
+    if not m.has(key) { return "" }
+    return String(m[key])
+}
+
+---
+A list value ([] when it's not there).
+---
+define _cfg_list(m: Map, key: String) -> List {
+    if not m.has(key) { return [] }
+    v := m[key]
+    if type(v) != "List" { return [] }
+    return v as List
+}
+
+---
+Space-separated words ("def class if") as a set: word -> true.
+---
+define _cfg_words(m: Map, key: String) -> Map {
+    out := Map()
+    for w in _cfg_str(m, key).split(" ") {
+        word: String = w
+        if word.length() > 0 { out[word] = true }
+    }
+    return out
+}
+
+---
+Read a language config (.toml):
+    name = "Python"
+    extensions = [".py"]
+    line_comment = "#"
+    keywords = "def class if"
+    [[rule]]
+    kind = "string"
+    begin = '"""'
+    end = '"""'
+    [server]
+    command = ["pyright-langserver", "--stdio"]
+Every key is optional.
+---
+define parse_config(text: String) -> LanguageConfig {
+    m := toml.parse(text)
+    
+    // [[rule]] tables come back as a List of Maps.
+    rules := []
+    for r in _cfg_list(m, "rule") {
+        rm: Map = r
+        rules.append(Rule(_cfg_str(rm, "kind"), _cfg_str(rm, "match"), _cfg_str(rm, "begin"), _cfg_str(rm, "end")))
+    }
+
+    // [server] is a Map inside the top-level one.
+    server := []
+    if m.has("server") {
+        sm: Map = m["server"]
+        server = _cfg_list(sm, "command")
+    }
+
+    return LanguageConfig(_cfg_str(m, "name"), _cfg_list(m, "extensions"), _cfg_str(m, "line_comment"),
+                          _cfg_list(m, "brackets"), _cfg_list(m, "auto_close"),
+                          _cfg_words(m, "keywords"), _cfg_words(m, "constants"), _cfg_words(m, "types"),
+                          rules, server)
+}

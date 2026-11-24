@@ -1,0 +1,63 @@
+// syntax: Highlighter: a file's tokens, kept between edits
+
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+from .language use { CODE, Language, LineTokens }
+
+---
+A file's tokens, line by line, kept between edits. `tokens(lines, i)` gives
+line `i`'s (working out the lines above it the first time); after an edit,
+`changed(first_line)` — what's above stays, what's below is redone when
+it's asked for, and stops being redone where the line states agree again.
+---
+struct Highlighter {
+    lang: Language
+    _starts: List        // the state each line starts in (as far as known)
+    _cache: List         // LineTokens per line (null: not worked out)
+
+    define __init(self, lang: Language) -> void {
+        self.lang = lang
+        self._starts = [CODE]
+        self._cache = []
+    }
+
+    --- Line `i`'s tokens (`lines`: the file's lines, as Strings). ---
+    define tokens(self, lines: List, i: Int) -> List {
+        if i < 0 or i >= lines.length() { return [] }
+        self._fill(lines, i)
+        lt: LineTokens = self._cache[i]
+        return lt.tokens
+    }
+
+    --- The state line `i` starts in. ---
+    define state_at(self, lines: List, i: Int) -> Int {
+        if i <= 0 { return CODE }
+        self._fill(lines, i - 1)
+        return Int(self._starts[i])
+    }
+
+    --- Lines from `first` on changed (typed into, inserted, removed): forget them. ---
+    define changed(self, first: Int) -> void {
+        f := first < 0 ? 0 : first
+        while self._cache.length() > f { self._cache.pop() }
+        while self._starts.length() > f + 1 { self._starts.pop() }
+    }
+
+    --- Everything changed (another file, another language). ---
+    define reset(self) -> void {
+        self._starts = [CODE]
+        self._cache = []
+    }
+
+    define _fill(self, lines: List, upto: Int) -> void {
+        i := self._cache.length()
+        while i <= upto {
+            line: String = lines[i]
+            st := Int(self._starts[i])
+            lt := self.lang.tokenize(line, st)
+            self._cache.append(lt)
+            if self._starts.length() == i + 1 { self._starts.append(lt.state) } else { self._starts[i + 1] = lt.state }
+            i = i + 1
+        }
+    }
+}

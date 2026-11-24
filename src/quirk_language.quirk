@@ -1,0 +1,223 @@
+// syntax: QuirkLanguage: colouring Quirk
+
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+from .language use { CODE, DOC, Language, LineTokens, RAW_TRIPLE1, RAW_TRIPLE2, Token, TRIPLE1, TRIPLE2 }
+
+_quirk_keywords := {"define": true, "struct": true, "super": true, "use": true, "from": true, "extend": true,
+                    "init": true, "extern": true, "return": true, "if": true, "else": true, "elif": true,
+                    "and": true, "or": true, "not": true, "while": true, "for": true, "in": true, "with": true,
+                    "as": true, "del": true, "is": true, "try": true, "catch": true, "throw": true,
+                    "finally": true, "break": true, "continue": true, "enum": true, "match": true,
+                    "case": true, "fn": true, "where": true, "const": true, "type": true, "nonlocal": true,
+                    "global": true, "interface": true, "async": true, "await": true, "self": true}
+
+_quirk_constants := {"true": true, "false": true, "null": true}
+
+--- Quirk: keywords, types, strings (raw, triple-quoted, `${}` interpolation), // comments, --- docstrings ---. ---
+struct QuirkLanguage : Language {
+    define __init(self) -> void {
+        super().__init("Quirk")
+    }
+
+    define line_comment(self) -> String {
+        return "//"
+    }
+
+    define tokenize(self, line: String, state: Int) -> LineTokens {
+        out := []
+        n := line.length()
+        i := 0
+        st := state
+        // Inside something from the line before: carry on until it closes.
+        if st == DOC {
+            close := line.find("---")
+            if close < 0 {
+                if n > 0 { out.append(Token(0, n, "doc")) }
+                return LineTokens(out, DOC)
+            }
+            out.append(Token(0, close + 3, "doc"))
+            i = close + 3
+            st = CODE
+        } elif st != CODE {
+            quote := (st == TRIPLE1 or st == RAW_TRIPLE1) ? "'" : "\""
+            raw := st == RAW_TRIPLE2 or st == RAW_TRIPLE1
+            end := _string_body(line, 0, quote, true, raw, out)
+            if end < 0 { return LineTokens(out, st) }
+            i = end
+            st = CODE
+        }
+        last_word := ""
+        while i < n {
+            c := line[i]
+            if c == " " or c == "\t" {
+                i = i + 1
+                continue
+            }
+            if c == "/" and i + 1 < n and line[i + 1] == "/" {
+                out.append(Token(i, n, "comment"))
+                return LineTokens(out, CODE)
+            }
+            if c == "-" and _at(line, i, "---") {
+                close := line.find("---", i + 3)
+                if close < 0 {
+                    out.append(Token(i, n, "doc"))
+                    return LineTokens(out, DOC)
+                }
+                out.append(Token(i, close + 3, "doc"))
+                i = close + 3
+                continue
+            }
+            raw := false
+            q := i
+            if (c == "r") and i + 1 < n and (line[i + 1] == "\"" or line[i + 1] == "'") and not _word_char_before(line, i) {
+                raw = true
+                q = i + 1
+            }
+            if line[q] == "\"" or line[q] == "'" {
+                quote := line[q]
+                triple := _at(line, q, quote + quote + quote)
+                body := q + (triple ? 3 : 1)
+                out.append(Token(i, body, "string"))
+                end := _string_body(line, body, quote, triple, raw, out)
+                if end < 0 {
+                    if not triple { return LineTokens(out, CODE) }   // (unterminated: to the end of the line)
+                    if quote == "'" { return LineTokens(out, raw ? RAW_TRIPLE1 : TRIPLE1) }
+                    return LineTokens(out, raw ? RAW_TRIPLE2 : TRIPLE2)
+                }
+                i = end
+                last_word = ""
+                continue
+            }
+            if _is_digit(c) {
+                j := i + 1
+                while j < n and (_is_word(line[j]) or (line[j] == "." and j + 1 < n and _is_digit(line[j + 1]))) { j = j + 1 }
+                out.append(Token(i, j, "number"))
+                i = j
+                continue
+            }
+            if _is_word_start(c) {
+                j := i + 1
+                while j < n and _is_word(line[j]) { j = j + 1 }
+                word := line.substring(i, j)
+                kind := "plain"
+                if _quirk_constants.has(word) {
+                    kind = "constant"
+                } elif _quirk_keywords.has(word) {
+                    kind = "keyword"
+                } elif last_word == "define" or last_word == "fn" {
+                    kind = "function"
+                } elif _next_char(line, j) == "(" {
+                    kind = _is_upper(c) ? "type" : "function"
+                } elif _is_upper(c) {
+                    kind = "type"
+                }
+                out.append(Token(i, j, kind))
+                last_word = word
+                i = j
+                continue
+            }
+            if c == "@" {
+                j := i + 1
+                while j < n and _is_word(line[j]) { j = j + 1 }
+                out.append(Token(i, j, "decorator"))
+                i = j
+                continue
+            }
+            if "()[]{},;".contains(c) {
+                out.append(Token(i, i + 1, "punctuation"))
+                i = i + 1
+                continue
+            }
+            j := i + 1
+            while j < n and "+-*/%=<>!&|^~?:.".contains(line[j]) and not (line[j] == "/" and j + 1 < n and line[j + 1] == "/") { j = j + 1 }
+            out.append(Token(i, j, "operator"))
+            i = j
+        }
+        return LineTokens(out, st)
+    }
+}
+
+// From `start`, the inside of a string closed by `quote` (three of them when
+// `triple`): its pieces appended to `out` ("string", and unless `raw`,
+// "escape" for \x and "interpolation" for ${...} / $name). Where it ends
+// (after the closing quote), or -1 when the line ends first.
+define _string_body(line: String, start: Int, quote: String, triple: Bool, raw: Bool, out: List) -> Int {
+    n := line.length()
+    i := start
+    seg := start
+    close := triple ? quote + quote + quote : quote
+    while i < n {
+        if _at(line, i, close) {
+            out.append(Token(seg, i + close.length(), "string"))
+            return i + close.length()
+        }
+        c := line[i]
+        if not raw and c == "\\" and i + 1 < n {
+            if i > seg { out.append(Token(seg, i, "string")) }
+            out.append(Token(i, i + 2, "escape"))
+            i = i + 2
+            seg = i
+            continue
+        }
+        if not raw and c == "$" and i + 1 < n and (line[i + 1] == "{" or _is_word_start(line[i + 1])) {
+            if i > seg { out.append(Token(seg, i, "string")) }
+            j := i + 1
+            if line[j] == "{" {
+                depth := 0
+                while j < n {
+                    if line[j] == "{" { depth = depth + 1 }
+                    if line[j] == "}" {
+                        depth = depth - 1
+                        if depth == 0 {
+                            j = j + 1
+                            break
+                        }
+                    }
+                    j = j + 1
+                }
+            } else {
+                while j < n and _is_word(line[j]) { j = j + 1 }
+            }
+            out.append(Token(i, j, "interpolation"))
+            i = j
+            seg = i
+            continue
+        }
+        i = i + 1
+    }
+    if n > seg { out.append(Token(seg, n, "string")) }
+    return -1
+}
+
+define _at(line: String, i: Int, s: String) -> Bool {
+    if i + s.length() > line.length() { return false }
+    return line.substring(i, i + s.length()) == s
+}
+
+define _is_digit(c: String) -> Bool {
+    return c >= "0" and c <= "9"
+}
+
+define _is_upper(c: String) -> Bool {
+    return c >= "A" and c <= "Z"
+}
+
+define _is_word_start(c: String) -> Bool {
+    return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_"
+}
+
+define _is_word(c: String) -> Bool {
+    return _is_word_start(c) or _is_digit(c)
+}
+
+define _word_char_before(line: String, i: Int) -> Bool {
+    return i > 0 and _is_word(line[i - 1])
+}
+
+// The next character after `j` that isn't a space ("" at the end).
+define _next_char(line: String, j: Int) -> String {
+    k := j
+    while k < line.length() and line[k] == " " { k = k + 1 }
+    return k < line.length() ? line[k] : ""
+}

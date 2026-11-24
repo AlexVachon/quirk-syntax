@@ -1,8 +1,8 @@
 name          = "syntax"
-version       = "0.1.1"
+version       = "0.2.0"
 license       = "MIT"
-description   = "Syntax highlighting: a line-by-line tokenizer (Quirk first), a Highlighter that re-colours only what an edit changed, and colour themes."
+description   = "Syntax highlighting: a line-by-line tokenizer (Quirk built in, any other language from a .toml config of rules and words), a Highlighter that re-colours only what an edit changed, and colour themes."
 repository    = "github.com/AlexVachon/quirk-syntax"
-quirk-version = ">=7.58.0"
+quirk-version = ">=7.74.0"
 
 [deps]

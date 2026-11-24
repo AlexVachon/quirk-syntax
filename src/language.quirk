@@ -1,0 +1,68 @@
+// syntax: Token, LineTokens and the base Language (what a line starts inside: CODE, DOC...)
+
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+
+// What a line starts inside (Language.tokenize's `state`).
+const CODE: Int = 0
+
+const DOC: Int = 1             // a --- docstring ---
+
+const TRIPLE2: Int = 2         // """ ... """
+
+const TRIPLE1: Int = 3         // ''' ... '''
+
+const RAW_TRIPLE2: Int = 4     // r""" ... """
+
+const RAW_TRIPLE1: Int = 5     // r''' ... '''
+
+--- Characters [start, end) of a line, of one `kind`. ---
+struct Token {
+    start: Int
+    end: Int
+    kind: String
+
+    define __init(self, start: Int, end: Int, kind: String) -> void {
+        self.start = start
+        self.end = end
+        self.kind = kind
+    }
+
+    define __str(self) -> String {
+        return self.kind + "[" + String(self.start) + ", " + String(self.end) + ")"
+    }
+}
+
+--- A line's tokens, and the state the next line starts in. ---
+struct LineTokens {
+    tokens: List
+    state: Int
+
+    define __init(self, tokens: List, state: Int) -> void {
+        self.tokens = tokens
+        self.state = state
+    }
+}
+
+---
+How a language is coloured: `tokenize(line, state)` — `state` is what the
+line starts inside (0: plain code). The base one makes the whole line
+"plain"; subclass it for another language.
+---
+struct Language {
+    name: String
+
+    define __init(self, name: String) -> void {
+        self.name = name
+    }
+
+    define tokenize(self, line: String, state: Int) -> LineTokens {
+        if line.length() == 0 { return LineTokens([], state) }
+        return LineTokens([Token(0, line.length(), "plain")], state)
+    }
+
+    --- What starts a line comment ("" for none): editors use it to comment lines out. ---
+    define line_comment(self) -> String {
+        return ""
+    }
+}
